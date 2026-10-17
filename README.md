@@ -8,6 +8,7 @@ Carnet d'entraînement mobile-first en HTML/CSS/JavaScript, sans serveur ni dép
 - Saisie de la charge réelle, des répétitions et du RIR, avec validation série par série.
 - Historique, volume d'entraînement, graphique de progression et suivi du poids corporel.
 - Notes de séance et suivi du sommeil/fatigue.
+- Planning daté à partir du lundi 19 octobre 2026, navigation par semaine, déplacement d'une séance vers un autre jour et suppression d'une séance planifiée ou enregistrée.
 - Bilan hebdomadaire à copier dans ChatGPT pour analyse et préparation de la semaine suivante.
 - Export/import JSON des données et cache hors-ligne basique (PWA).
 
