@@ -377,7 +377,7 @@ const _activateViewAdaptive=activateView;
 activateView=function(name){_activateViewAdaptive(name);if(name==='nutrition')renderNutrition();if(name==='performance')renderPerformance();if(name==='tools'){renderExerciseLibrary();document.getElementById('trainingNotes').value=db.trainingNotes}if(name==='progress')renderProgressAnalysis();refreshCoach()};
 document.getElementById('cardioType').addEventListener('change',()=>{if(document.getElementById('cardioType').value==='Badminton')document.getElementById('cardioNotes').placeholder='Simple, double, matchs, intensité, sensations…'});
 
-function massGoals(){db.massGoals=db.massGoals||{targetWeight:88,weeklyGain:275,protein:170,calories:3100};return db.massGoals}
+function massGoals(){db.massGoals=db.massGoals||{targetWeight:null,weeklyGain:275,protein:170,calories:3100};return db.massGoals}
 function massEstimate(weight,reps){const w=Number(weight),r=Number(reps);return w>0&&r>0?w*(1+r/30):0}
 function massExerciseGroup(name){const n=(name||'').toLowerCase();if(/développé|butterfly|pec|écarté/.test(n))return 'Pectoraux';if(/rowing|tirage|oiseau|traction|dos/.test(n))return 'Dos';if(/élévation latérale|développé vertical|rotation externe/.test(n))return 'Épaules';if(/curl|biceps/.test(n))return 'Biceps';if(/triceps|extension triceps/.test(n))return 'Triceps';if(/split squat|jamb|leg curl|extension de jambes|soulevé de terre|mollet|leg bridge|presse/.test(n))return 'Jambes';if(/crunch|gainage|abdo/.test(n))return 'Abdominaux';return 'Autres'}
 function renderMassStrength(){
