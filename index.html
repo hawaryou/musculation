@@ -197,5 +197,145 @@ document.getElementById('saveTrainingNotes').onclick=()=>{db.trainingNotes=docum
 const _activateView=activateView;
 activateView=function(name){_activateView(name);if(name==='nutrition')renderNutrition();if(name==='performance')renderPerformance();if(name==='tools'){renderExerciseLibrary();document.getElementById('trainingNotes').value=db.trainingNotes}};
 
-selectFirstWorkoutInWeek();renderWeek();renderWorkout();renderStats();updateTimer();if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+
+/* Programmation adaptative, planification multisport et analyse consolidée */
+function latestRecovery(){
+ const r=[...(db.recovery||[])].sort((a,b)=>b.date.localeCompare(a.date))[0];
+ const ready=[...(db.readiness||[])].sort((a,b)=>b.date.localeCompare(a.date))[0];
+ const fatigue=Number(r?.fatigue||3),energy=Number(ready?.energy||3),soreness=Number(ready?.soreness||3),stress=Number(ready?.stress||3),pain=!!ready?.pain;
+ const since=new Date();since.setHours(0,0,0,0);since.setDate(since.getDate()-6);const cutoff=dateKey(since);
+ const badminton=(db.cardio||[]).filter(x=>x.date>=cutoff&&/badminton/i.test(x.type||''));
+ const badmintonMinutes=badminton.reduce((n,x)=>n+(+x.minutes||0),0);
+ return {r,ready,fatigue,energy,soreness,stress,pain,badmintonMinutes,badmintonCount:badminton.length,high:pain||fatigue>=4||soreness>=4||energy<=2||badmintonMinutes>=240,moderate:fatigue===3||soreness===3||stress>=4||energy===3||badmintonMinutes>=150};
+}
+function weekPlanSummary(){
+ const base=weekBase(),rows=[];
+ for(let i=0;i<7;i++){const d=new Date(base);d.setDate(base.getDate()+i);const date=dateKey(d),code=codeFor(date,i);const label=code==='badminton'?'Badminton':code==='rest'?'Repos':EX[code]?.title||'Libre';rows.push({date,code,label,day:DAYS[i][1]})}
+ return rows;
+}
+function refreshCoach(){
+ const rec=latestRecovery(),today=todayKey(),dayIndex=(new Date(today+'T12:00:00').getDay()+6)%7;
+ const todayCode=codeFor(today,dayIndex),plan=weekPlanSummary();
+ const session=EX[todayCode]?.title||(todayCode==='badminton'?'Badminton':todayCode==='rest'?'Récupération':'Journée libre');
+ const nextBadminton=plan.filter(x=>x.code==='badminton').length,nextStrength=plan.filter(x=>EX[x.code]).length;
+ let priority='Réalise la séance prévue',load='Progression graduelle',summary='Respecte la technique et conserve 1 à 3 répétitions en réserve sur la majorité des séries.';
+ if(rec.pain){priority='Priorité à la douleur';load='Évite les mouvements douloureux';summary='Une douleur inhabituelle prime sur le programme : ne force pas le mouvement concerné et demande un avis médical si nécessaire.'}
+ else if(rec.high){priority='Récupération prioritaire';load='Réduis le volume de 25 à 40 %';summary='Les indicateurs suggèrent une fatigue élevée. Garde une technique propre, retire des séries et évite l’échec musculaire aujourd’hui.'}
+ else if(rec.moderate){priority='Séance maîtrisée';load='Maintiens la charge, RIR 2–3';summary='État de forme intermédiaire : conserve les charges si la technique reste bonne et ne force pas une progression aujourd’hui.'}
+ else {priority='Progression contrôlée';load='+1 répétition ou petit incrément';summary='Si toutes les séries précédentes étaient propres et avec une marge suffisante, augmente d’abord les répétitions, puis la charge.'}
+ document.getElementById('coachTitle').textContent='Aujourd’hui : '+session;
+ document.getElementById('coachSummary').textContent=summary;
+ document.getElementById('coachPriority').textContent=priority;
+ document.getElementById('coachLoad').textContent=load;
+ document.getElementById('coachBalance').textContent=nextStrength+' séances muscu · '+nextBadminton+' badminton';
+}
+function adaptRecommendation(code,exIndex,ex){
+ const rec=latestRecovery();let sets=ex[1],target=ex[4]||0,why='';
+ const last=[...(db.logs||[])].filter(l=>l.code===code&&l.date<selectedDate).sort((a,b)=>b.date.localeCompare(a.date))[0];
+ const previous=last?.exercises?.[String(exIndex)]?.sets||[];
+ const done=previous.filter(x=>x.done),good=done.length>0&&done.every(x=>(Number(x.reps)||0)>=ex[3]&&(x.rir===''||x.rir==null||Number(x.rir)>=2));
+ const hard=done.some(x=>(Number(x.rir)||0)<=0||(Number(x.reps)||0)<ex[2]);
+ const lastLoads=done.map(x=>Number(x.weight)||0).filter(x=>x>0);
+ if(lastLoads.length)target=Math.max(...lastLoads);
+ if(rec.pain){sets=Math.max(0,sets-1);why='Douleur signalée : ne réalise pas un exercice douloureux.'}
+ else if(rec.high){sets=Math.max(1,sets-1);why='Fatigue élevée : une série de moins, effort facile et aucune série à l’échec.'}
+ else if(hard){why='Dernière séance difficile : garde la charge ou baisse-la légèrement, priorité à la technique.';target=target?target*.95:0}
+ else if(good){why='Dernière séance réussie : essaie d’abord une répétition de plus dans la fourchette.';target=target?target*1.025:0}
+ else {why='Garde une marge de 2–3 répétitions et stabilise la technique.'}
+ return {sets,target,why};
+}
+function renderProgressAnalysis(){
+ const start=new Date();start.setHours(12,0,0,0);start.setDate(start.getDate()-27);const since=dateKey(start);
+ const logs=(db.logs||[]).filter(l=>l.date>=since),sets=logs.reduce((n,l)=>n+Object.values(l.exercises||{}).reduce((m,e)=>m+(e.sets||[]).filter(x=>x.done).length,0),0);
+ const volume=logs.reduce((n,l)=>n+Object.values(l.exercises||{}).reduce((m,e)=>m+(e.sets||[]).reduce((v,x)=>v+(x.done?(+x.weight||0)*(+x.reps||0):0),0),0),0);
+ const cardio=(db.cardio||[]).filter(x=>x.date>=since),minutes=cardio.reduce((n,x)=>n+(+x.minutes||0),0),badminton=cardio.filter(x=>/badminton/i.test(x.type||'')).length;
+ const rec=latestRecovery(),weight=[...(db.weights||[])].filter(x=>x.date>=since).sort((a,b)=>a.date.localeCompare(b.date));
+ const delta=weight.length>1?(weight[weight.length-1].weight-weight[0].weight):null;
+ document.getElementById('progressAnalysis').innerHTML=[
+ ['Séances muscu',logs.length,'sur 28 jours'],
+ ['Séries validées',sets,'tous exercices'],
+ ['Volume soulevé',volume>999?(volume/1000).toFixed(1)+'k':Math.round(volume).toLocaleString('fr-FR'),'kg × reps'],
+ ['Cardio / badminton',minutes+' min',badminton+' activité(s) badminton']
+ ].map(x=>'<div class="analysis-metric"><span>'+x[0]+'</span><strong>'+x[1]+'</strong><small>'+x[2]+'</small></div>').join('');
+ const insights=[];
+ if(logs.length===0)insights.push('Commence par enregistrer tes séances : l’analyse se construira automatiquement.');
+ else if(logs.length<4)insights.push('Tu as '+logs.length+' séance(s) enregistrée(s) sur 4 semaines. La tendance deviendra plus fiable avec davantage de données.');
+ else insights.push('Tu as enregistré '+logs.length+' séances en 4 semaines. Compare la régularité avant de chercher à augmenter le volume.');
+ if(rec.pain)insights.push('Douleur inhabituelle signalée : adapte la séance et ne cherche pas à progresser sur un mouvement douloureux.');
+ else if(rec.high)insights.push('Fatigue élevée détectée dans le dernier check-in ou charge badminton élevée : préfère une séance allégée ou de récupération.');
+ else insights.push('Dernier état de forme : énergie '+rec.energy+'/5, courbatures '+rec.soreness+'/5, fatigue générale '+rec.fatigue+'/5.');
+ if(delta!==null)insights.push('Évolution du poids sur les pesées disponibles : '+(delta>0?'+':'')+delta.toFixed(1)+' kg. Interprète la tendance sur plusieurs semaines, pas une pesée isolée.');
+ if(cardio.length===0)insights.push('Enregistre aussi le badminton et le cardio dans Performance pour équilibrer les charges multisports.');
+ else insights.push('Activités cardio consignées : '+cardio.length+' pour '+minutes+' minutes. Le badminton saisi ici est inclus au bilan.');
+ document.getElementById('progressInsights').innerHTML=insights.map(x=>'<div class="insight"><i>✦</i><span>'+safeText(x)+'</span></div>').join('');
+}
+function renderExerciseLibrary(){
+ const q=(document.getElementById('exerciseSearch').value||'').trim().toLowerCase();
+ const group=document.getElementById('exerciseGroup')?.value||'all',all=[];
+ const groups={
+ 'Développé incliné haltères':['pectoraux, épaules, triceps','Développé machine convergente','Pompes inclinées','Évite de hausser les épaules et contrôle la descente'],
+ 'Développé vertical Panatta':['épaules, triceps','Développé épaules haltères léger','Presse à épaules guidée','Garde le dos appuyé et ne force pas l’amplitude'],
+ 'Rowing assis unilatéral Matrix':['dos, biceps','Rowing poitrine appuyée','Tirage assis prise neutre','Évite de tourner le buste pour terminer la répétition'],
+ 'Tirage vertical Panatta':['dos, biceps','Tirage prise neutre','Tractions assistées','Ne tire pas derrière la nuque'],
+ 'Élévations latérales machine':['épaules','Élévations latérales poulie','Élévations latérales assises','Charge légère, sans élan'],
+ 'Extension triceps poulie':['bras, triceps','Extension triceps corde','Extension triceps unilatérale','Coudes stables, évite de balancer le buste'],
+ 'Curl biceps machine Panatta':['bras, biceps','Curl incliné haltères','Curl poulie','Ne balance pas les épaules'],
+ 'Split squat avec haltères':['jambes, fessiers','Presse à cuisses légère','Fente arrière assistée','Garde l’équilibre et une amplitude contrôlée'],
+ 'Soulevé de terre roumain':['jambes, fessiers','Pull-through poulie','Hip hinge avec haltères légers','Hanches en arrière, dos neutre, arrête si douleur'],
+ 'Extension de jambes unilatérale':['jambes, quadriceps','Presse unilatérale','Step-up bas','Contrôle la descente, sans verrouiller brutalement le genou'],
+ 'Leg curl assis Panatta':['jambes, ischios','Leg curl allongé','Curl ischio à la poulie','Garde les hanches stables'],
+ 'Leg bridge Panatta':['fessiers, jambes','Hip thrust léger','Pont fessier au sol','Ne cambre pas excessivement le bas du dos'],
+ 'Mollets à la presse':['jambes, mollets','Mollets debout assistés','Mollets assis','Utilise une amplitude confortable'],
+ 'Crunch machine Panatta':['abdominaux','Crunch au sol','Dead bug','Enroule le tronc sans tirer sur la nuque'],
+ 'Développé super incliné Panatta':['pectoraux, épaules','Développé incliné haltères léger','Pompes inclinées','Garde les épaules basses'],
+ 'Rowing circulaire Panatta unilatéral':['dos, biceps','Rowing poitrine appuyée','Tirage assis neutre','Pas de rotation du buste'],
+ 'Développé horizontal Panatta':['pectoraux, triceps','Développé haltères neutre','Pompes inclinées','Descends de façon contrôlée'],
+ 'Butterfly':['pectoraux','Écartés poulie légers','Pompes inclinées','Étirement confortable, pas de rebond'],
+ 'Oiseau à la machine':['épaules, dos','Oiseau poulie','Oiseau haltères légers','Évite de hausser les épaules'],
+ 'Élévations latérales haltères':['épaules','Élévations latérales poulie','Élévations latérales assises','Charge légère, pas d’élan'],
+ 'Curl incliné haltères':['bras, biceps','Curl poulie','Curl marteau','Garde les coudes stables'],
+ 'Rotation externe à la machine':['prévention','Rotation externe élastique légère','Rotation externe à la poulie légère','Très léger, sans douleur et sans forcer'],
+ 'Oiseau aux haltères':['épaules, dos','Oiseau à la machine','Oiseau poulie','Mouvement contrôlé, sans élan'],
+ 'Curl marteau à la poulie':['bras, biceps','Curl marteau haltères','Curl poulie basse','Poignets neutres'],
+ 'Gainage':['abdominaux','Dead bug','Bird-dog','Respire normalement et arrête si le bas du dos se creuse']
+ };
+ Object.entries(EX).forEach(([code,def])=>def.items.forEach((x,i)=>{
+ const extra=groups[x[0]]||['muscles sollicités','Variante légère','Variante guidée','Privilégie une amplitude contrôlée'];
+ const muscle=extra[0],alternatives=extra.slice(1,3),mistake=extra[3]||'Contrôle le mouvement et évite l’élan.';
+ const allText=[x[0],def.title,x[7],muscle,...alternatives,mistake].join(' ').toLowerCase();
+ const groupMatch=group==='all'||muscle.toLowerCase().includes(group)||(group==='jambes'&&/jambes|fessiers|mollets|quadriceps|ischios/.test(muscle.toLowerCase()))||(group==='pectoraux'&&/pectoraux/.test(muscle.toLowerCase()))||(group==='prévention'&&/prévention/.test(muscle.toLowerCase()));
+ if((exerciseFilter==='all'||code===exerciseFilter)&&groupMatch&&allText.includes(q))all.push({code,name:x[0],sets:x[1],min:x[2],max:x[3],weight:x[4],tempo:x[5],rest:x[6],tip:x[7],group:def.title,muscle,alternatives,mistake});
+ }));
+ document.getElementById('exerciseLibrary').innerHTML=all.length?all.map(x=>'<article class="exercise"><div class="exhead"><div><div class="exname">'+safeText(x.name)+'</div><div class="library-card-meta"><span class="library-badge">'+safeText(x.muscle)+'</span><span class="library-badge">'+safeText(x.group)+'</span><span class="library-badge">'+x.sets+' × '+x.min+'–'+x.max+' reps</span></div></div>'+(x.weight?'<span class="target">'+x.weight+' kg repère</span>':'')+'</div><p class="library-detail"><b>Objectif :</b> '+safeText(x.tip)+'</p><p class="library-detail"><b>À surveiller :</b> '+safeText(x.mistake)+'</p><p class="library-detail"><b>Alternatives :</b> '+safeText(x.alternatives.join(' · '))+'</p><p class="library-detail"><b>Tempo / repos :</b> '+safeText(x.tempo)+' · '+safeText(x.rest)+'</p></article>').join(''):'<p class="empty">Aucun exercice ne correspond à cette recherche.</p>';
+}
+function setActivityTypeOptions(){const el=document.getElementById('cardioType');if(el&&!Array.from(el.options).some(o=>o.value==='Badminton'))el.insertAdjacentHTML('beforeend','<option value="Badminton">Badminton</option><option value="Natation">Natation</option><option value="Marche sportive">Marche sportive</option>')}
+document.getElementById('exerciseGroup').addEventListener('change',renderExerciseLibrary);
+document.getElementById('coachOpenWorkout').onclick=()=>{activateView('workout');document.getElementById('view-workout').scrollIntoView({behavior:'smooth',block:'start'})};
+document.getElementById('coachOpenPerformance').onclick=()=>{activateView('performance');document.getElementById('view-performance').scrollIntoView({behavior:'smooth',block:'start'})};
+document.getElementById('coachOpenProgress').onclick=()=>{activateView('progress');document.getElementById('view-progress').scrollIntoView({behavior:'smooth',block:'start'})};
+const _renderWorkoutAdaptive=renderWorkout;
+renderWorkout=function(){
+ _renderWorkoutAdaptive();
+ const rec=latestRecovery(),code=selected;
+ if(!EX[code])return;
+ const note=document.createElement('div');note.className='insight';
+ note.innerHTML='<i>✦</i><span><b>Ajustement adaptatif :</b> '+safeText(rec.pain?'Ne force pas sur une douleur inhabituelle.':rec.high?'Fatigue élevée : retire une série par exercice si tu t’entraînes et garde une marge confortable.':rec.moderate?'État de forme moyen : garde les charges et vise RIR 2–3.':'Si la dernière séance était facile, augmente d’abord les répétitions avant la charge.')+'</span>';
+ const list=document.getElementById('exerciseList');list.prepend(note);
+ Array.from(list.querySelectorAll('article.exercise')).forEach((card,i)=>{
+  const ex=EX[code].items[i];if(!ex)return;const recx=adaptRecommendation(code,i,ex);
+  const target=card.querySelector('.target');if(target&&recx.target>0)target.textContent='Cible suggérée '+(Math.round(recx.target*2)/2)+' kg';
+  const rowNote=document.createElement('p');rowNote.className='adaptive-note';rowNote.textContent='Aujourd’hui : '+recx.sets+' série(s) conseillée(s) · '+recx.why;card.appendChild(rowNote);
+  card.querySelectorAll('input[data-field="weight"]').forEach(input=>{if(recx.target>0)input.placeholder=String(Math.round(recx.target*2)/2)});
+ });
+};
+const _renderProgressAdaptive=renderProgress;
+renderProgress=function(){_renderProgressAdaptive();renderProgressAnalysis()};
+const _persistAdaptive=persist;
+persist=function(){_persistAdaptive();refreshCoach();renderProgressAnalysis()};
+const _activateViewAdaptive=activateView;
+activateView=function(name){_activateViewAdaptive(name);if(name==='nutrition')renderNutrition();if(name==='performance')renderPerformance();if(name==='tools'){renderExerciseLibrary();document.getElementById('trainingNotes').value=db.trainingNotes}if(name==='progress')renderProgressAnalysis();refreshCoach()};
+document.getElementById('cardioType').addEventListener('change',()=>{if(document.getElementById('cardioType').value==='Badminton')document.getElementById('cardioNotes').placeholder='Simple, double, matchs, intensité, sensations…'});
+setActivityTypeOptions();
+
+selectFirstWorkoutInWeek();renderWeek();renderWorkout();renderStats();updateTimer();refreshCoach();renderProgressAnalysis();setActivityTypeOptions();if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script></body></html>
