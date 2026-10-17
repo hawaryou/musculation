@@ -1,4 +1,4 @@
-const CACHE = 'training-os-v5';
+const CACHE = 'training-os-v6';
 const FILES = ['./', './index.html', './manifest.json', './icon.svg'];
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
